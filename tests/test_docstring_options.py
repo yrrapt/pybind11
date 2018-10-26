@@ -35,4 +35,5 @@ def test_docstring_options():
 
     # Suppression of user-defined docstrings for non-function objects
     assert not m.DocstringTestFoo.__doc__
-    assert not m.DocstringTestFoo.value_prop.__doc__
+    # property signature still printed
+    assert m.DocstringTestFoo.value_prop.__doc__ == "int: "
