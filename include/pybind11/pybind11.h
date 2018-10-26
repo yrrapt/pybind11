@@ -717,22 +717,17 @@ protected:
 
                 bool wrote_sig = false;
                 if (overloads->is_constructor) {
-                    // For a constructor, rewrite `(self: Object, arg0, ...) -> NoneType` as `Object(arg0, ...)`
+                    // For a constructor, rewrite `(self, arg0, ...) -> NoneType` as `self(arg0, ...)`
                     std::string sig = it2->signature;
-                    size_t start = sig.find('(') + 7; // skip "(self: "
-                    if (start < sig.size()) {
-                        // End at the , for the next argument
-                        size_t end = sig.find(", "), next = end + 2;
-                        size_t ret = sig.rfind(" -> ");
-                        // Or the ), if there is no comma:
-                        if (end >= sig.size()) next = end = sig.find(')');
-                        if (start < end && next < sig.size()) {
-                            msg.append(sig, start, end - start);
-                            msg += '(';
-                            msg.append(sig, next, ret - next);
-                            wrote_sig = true;
-                        }
+                    if (sig.find("(self)") == std::string::npos) {
+                        size_t start = sig.find('(') + 7; // skip "(self, "
+                        size_t stop = sig.rfind(')') + 1; // end at ")"
+                        msg += "self(";
+                        msg.append(sig, start, stop - start);
+                    } else {
+                        msg += "self()"; // default constructor, rewrite as self()
                     }
+                    wrote_sig = true;
                 }
                 if (!wrote_sig) msg += it2->signature;
 
