@@ -221,20 +221,21 @@ protected:
         size_t type_index = 0, arg_index = 0;
         for (auto *pc = text; *pc != '\0'; ++pc) {
             const auto c = *pc;
-
+            bool is_self = arg_index == 0 && rec->is_method;
             if (c == '{') {
                 // Write arg name for everything except *args and **kwargs.
                 if (*(pc + 1) == '*')
                     continue;
 
-                if (arg_index < rec->args.size() && rec->args[arg_index].name) {
-                    signature += rec->args[arg_index].name;
-                } else if (arg_index == 0 && rec->is_method) {
+                if (is_self) {
                     signature += "self";
+                } else if (arg_index < rec->args.size() && rec->args[arg_index].name) {
+                    signature += rec->args[arg_index].name;
+                    signature += ": ";
                 } else {
                     signature += "arg" + std::to_string(arg_index - (rec->is_method ? 1 : 0));
+                    signature += ": ";
                 }
-                signature += ": ";
             } else if (c == '}') {
                 // Write default value if available.
                 if (arg_index < rec->args.size() && rec->args[arg_index].descr) {
@@ -246,21 +247,24 @@ protected:
                 const std::type_info *t = types[type_index++];
                 if (!t)
                     pybind11_fail("Internal error while parsing type signature (1)");
-                if (auto tinfo = detail::get_type_info(*t)) {
-                    handle th((PyObject *) tinfo->type);
-                    signature +=
-                        th.attr("__module__").cast<std::string>() + "." +
-                        th.attr("__qualname__").cast<std::string>(); // Python 3.3+, but we backport it to earlier versions
-                } else if (rec->is_new_style_constructor && arg_index == 0) {
-                    // A new-style `__init__` takes `self` as `value_and_holder`.
-                    // Rewrite it to the proper class type.
-                    signature +=
-                        rec->scope.attr("__module__").cast<std::string>() + "." +
-                        rec->scope.attr("__qualname__").cast<std::string>();
-                } else {
-                    std::string tname(t->name());
-                    detail::clean_type_id(tname);
-                    signature += tname;
+                // write type name to signature, but do not write to self
+                if (!is_self) {
+                    if (auto tinfo = detail::get_type_info(*t)) {
+                        handle th((PyObject *) tinfo->type);
+                        signature +=
+                                th.attr("__module__").cast<std::string>() + "." +
+                                th.attr("__qualname__").cast<std::string>(); // Python 3.3+, but we backport it to earlier versions
+                    } else if (rec->is_new_style_constructor && arg_index == 0) {
+                        // A new-style `__init__` takes `self` as `value_and_holder`.
+                        // Rewrite it to the proper class type.
+                        signature +=
+                                rec->scope.attr("__module__").cast<std::string>() + "." +
+                                rec->scope.attr("__qualname__").cast<std::string>();
+                    } else {
+                        std::string tname(t->name());
+                        detail::clean_type_id(tname);
+                        signature += tname;
+                    }
                 }
             } else {
                 signature += c;
