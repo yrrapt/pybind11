@@ -970,10 +970,22 @@ protected:
         const auto has_doc = rec_func && rec_func->doc && pybind11::options::show_user_defined_docstrings();
         auto property = handle((PyObject *) (is_static ? get_internals().static_property_type
                                                        : &PyProperty_Type));
+
+        // set property docstring
+        const char *prop_doc = has_doc ? rec_func->doc : "";
+        if (rec_func && pybind11::options::show_function_signatures()) {
+            // try to find property return type and append it to docstring
+            std::string sig_str(rec_func->signature);
+            auto loc = sig_str.rfind(") -> ");
+            if (loc != std::string::npos) {
+                // append return type annotation
+                prop_doc = strdup((sig_str.substr(loc + 5) + ": " + prop_doc).c_str());
+            }
+        }
         attr(name) = property(fget.ptr() ? fget : none(),
                               fset.ptr() ? fset : none(),
                               /*deleter*/none(),
-                              pybind11::str(has_doc ? rec_func->doc : ""));
+                              pybind11::str(prop_doc));
     }
 };
 
