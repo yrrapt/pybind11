@@ -463,8 +463,8 @@ def test_str_issue(msg):
         str(m.StrIssue("no", "such", "constructor"))
     assert msg(excinfo.value) == """
         __init__(): incompatible constructor arguments. The following argument types are supported:
-            1. m.methods_and_attributes.StrIssue(arg0: int)
-            2. m.methods_and_attributes.StrIssue()
+            1. self(arg0: int)
+            2. self()
 
         Invoked with: 'no', 'such', 'constructor'
     """

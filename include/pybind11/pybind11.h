@@ -221,20 +221,21 @@ protected:
         size_t type_index = 0, arg_index = 0;
         for (auto *pc = text; *pc != '\0'; ++pc) {
             const auto c = *pc;
-
+            bool is_self = arg_index == 0 && rec->is_method;
             if (c == '{') {
                 // Write arg name for everything except *args and **kwargs.
                 if (*(pc + 1) == '*')
                     continue;
 
-                if (arg_index < rec->args.size() && rec->args[arg_index].name) {
-                    signature += rec->args[arg_index].name;
-                } else if (arg_index == 0 && rec->is_method) {
+                if (is_self) {
                     signature += "self";
+                } else if (arg_index < rec->args.size() && rec->args[arg_index].name) {
+                    signature += rec->args[arg_index].name;
+                    signature += ": ";
                 } else {
                     signature += "arg" + std::to_string(arg_index - (rec->is_method ? 1 : 0));
+                    signature += ": ";
                 }
-                signature += ": ";
             } else if (c == '}') {
                 // Write default value if available.
                 if (arg_index < rec->args.size() && rec->args[arg_index].descr) {
@@ -246,21 +247,24 @@ protected:
                 const std::type_info *t = types[type_index++];
                 if (!t)
                     pybind11_fail("Internal error while parsing type signature (1)");
-                if (auto tinfo = detail::get_type_info(*t)) {
-                    handle th((PyObject *) tinfo->type);
-                    signature +=
-                        th.attr("__module__").cast<std::string>() + "." +
-                        th.attr("__qualname__").cast<std::string>(); // Python 3.3+, but we backport it to earlier versions
-                } else if (rec->is_new_style_constructor && arg_index == 0) {
-                    // A new-style `__init__` takes `self` as `value_and_holder`.
-                    // Rewrite it to the proper class type.
-                    signature +=
-                        rec->scope.attr("__module__").cast<std::string>() + "." +
-                        rec->scope.attr("__qualname__").cast<std::string>();
-                } else {
-                    std::string tname(t->name());
-                    detail::clean_type_id(tname);
-                    signature += tname;
+                // write type name to signature, but do not write to self
+                if (!is_self) {
+                    if (auto tinfo = detail::get_type_info(*t)) {
+                        handle th((PyObject *) tinfo->type);
+                        signature +=
+                                th.attr("__module__").cast<std::string>() + "." +
+                                th.attr("__qualname__").cast<std::string>(); // Python 3.3+, but we backport it to earlier versions
+                    } else if (rec->is_new_style_constructor && arg_index == 0) {
+                        // A new-style `__init__` takes `self` as `value_and_holder`.
+                        // Rewrite it to the proper class type.
+                        signature +=
+                                rec->scope.attr("__module__").cast<std::string>() + "." +
+                                rec->scope.attr("__qualname__").cast<std::string>();
+                    } else {
+                        std::string tname(t->name());
+                        detail::clean_type_id(tname);
+                        signature += tname;
+                    }
                 }
             } else {
                 signature += c;
@@ -713,22 +717,17 @@ protected:
 
                 bool wrote_sig = false;
                 if (overloads->is_constructor) {
-                    // For a constructor, rewrite `(self: Object, arg0, ...) -> NoneType` as `Object(arg0, ...)`
+                    // For a constructor, rewrite `(self, arg0, ...) -> NoneType` as `self(arg0, ...)`
                     std::string sig = it2->signature;
-                    size_t start = sig.find('(') + 7; // skip "(self: "
-                    if (start < sig.size()) {
-                        // End at the , for the next argument
-                        size_t end = sig.find(", "), next = end + 2;
-                        size_t ret = sig.rfind(" -> ");
-                        // Or the ), if there is no comma:
-                        if (end >= sig.size()) next = end = sig.find(')');
-                        if (start < end && next < sig.size()) {
-                            msg.append(sig, start, end - start);
-                            msg += '(';
-                            msg.append(sig, next, ret - next);
-                            wrote_sig = true;
-                        }
+                    if (sig.find("(self)") == std::string::npos) {
+                        size_t start = sig.find('(') + 7; // skip "(self, "
+                        size_t stop = sig.rfind(')') + 1; // end at ")"
+                        msg += "self(";
+                        msg.append(sig, start, stop - start);
+                    } else {
+                        msg += "self()"; // default constructor, rewrite as self()
                     }
+                    wrote_sig = true;
                 }
                 if (!wrote_sig) msg += it2->signature;
 
@@ -966,10 +965,22 @@ protected:
         const auto has_doc = rec_func && rec_func->doc && pybind11::options::show_user_defined_docstrings();
         auto property = handle((PyObject *) (is_static ? get_internals().static_property_type
                                                        : &PyProperty_Type));
+
+        // set property docstring
+        const char *prop_doc = has_doc ? rec_func->doc : "";
+        if (rec_func && pybind11::options::show_function_signatures()) {
+            // try to find property return type and append it to docstring
+            std::string sig_str(rec_func->signature);
+            auto loc = sig_str.rfind(") -> ");
+            if (loc != std::string::npos) {
+                // append return type annotation
+                prop_doc = strdup((sig_str.substr(loc + 5) + ": " + prop_doc).c_str());
+            }
+        }
         attr(name) = property(fget.ptr() ? fget : none(),
                               fset.ptr() ? fset : none(),
                               /*deleter*/none(),
-                              pybind11::str(has_doc ? rec_func->doc : ""));
+                              pybind11::str(prop_doc));
     }
 };
 

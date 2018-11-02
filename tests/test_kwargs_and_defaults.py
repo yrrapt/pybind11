@@ -12,10 +12,8 @@ def test_function_signatures(doc):
     assert doc(m.kw_func_udl_z) == "kw_func_udl_z(x: int, y: int = 0) -> str"
     assert doc(m.args_function) == "args_function(*args) -> tuple"
     assert doc(m.args_kwargs_function) == "args_kwargs_function(*args, **kwargs) -> tuple"
-    assert doc(m.KWClass.foo0) == \
-        "foo0(self: m.kwargs_and_defaults.KWClass, arg0: int, arg1: float) -> None"
-    assert doc(m.KWClass.foo1) == \
-        "foo1(self: m.kwargs_and_defaults.KWClass, x: int, y: float) -> None"
+    assert doc(m.KWClass.foo0) == "foo0(self, arg0: int, arg1: float) -> None"
+    assert doc(m.KWClass.foo1) == "foo1(self, x: int, y: float) -> None"
 
 
 def test_named_arguments(msg):
