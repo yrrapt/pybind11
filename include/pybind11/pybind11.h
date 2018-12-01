@@ -10,7 +10,17 @@
 
 #pragma once
 
-#if defined(_MSC_VER)
+#if defined(__INTEL_COMPILER)
+#  pragma warning push
+#  pragma warning disable 68    // integer conversion resulted in a change of sign
+#  pragma warning disable 186   // pointless comparison of unsigned integer with zero
+#  pragma warning disable 878   // incompatible exception specifications
+#  pragma warning disable 1334  // the "template" keyword used for syntactic disambiguation may only be used within a template
+#  pragma warning disable 1682  // implicit conversion of a 64-bit integral type to a smaller integral type (potential portability problem)
+#  pragma warning disable 1786  // function "strdup" was declared deprecated
+#  pragma warning disable 1875  // offsetof applied to non-POD (Plain Old Data) types is nonstandard
+#  pragma warning disable 2196  // warning #2196: routine is both "inline" and "noinline"
+#elif defined(_MSC_VER)
 #  pragma warning(push)
 #  pragma warning(disable: 4100) // warning C4100: Unreferenced formal parameter
 #  pragma warning(disable: 4127) // warning C4127: Conditional expression is constant
@@ -19,15 +29,6 @@
 #  pragma warning(disable: 4996) // warning C4996: The POSIX name for this item is deprecated. Instead, use the ISO C and C++ conformant name
 #  pragma warning(disable: 4702) // warning C4702: unreachable code
 #  pragma warning(disable: 4522) // warning C4522: multiple assignment operators specified
-#elif defined(__INTEL_COMPILER)
-#  pragma warning(push)
-#  pragma warning(disable: 68)    // integer conversion resulted in a change of sign
-#  pragma warning(disable: 186)   // pointless comparison of unsigned integer with zero
-#  pragma warning(disable: 878)   // incompatible exception specifications
-#  pragma warning(disable: 1334)  // the "template" keyword used for syntactic disambiguation may only be used within a template
-#  pragma warning(disable: 1682)  // implicit conversion of a 64-bit integral type to a smaller integral type (potential portability problem)
-#  pragma warning(disable: 1875)  // offsetof applied to non-POD (Plain Old Data) types is nonstandard
-#  pragma warning(disable: 2196)  // warning #2196: routine is both "inline" and "noinline"
 #elif defined(__GNUG__) && !defined(__clang__)
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wunused-but-set-parameter"
@@ -895,6 +896,7 @@ protected:
         tinfo->type = (PyTypeObject *) m_ptr;
         tinfo->cpptype = rec.type;
         tinfo->type_size = rec.type_size;
+        tinfo->type_align = rec.type_align;
         tinfo->operator_new = rec.operator_new;
         tinfo->holder_size_in_ptrs = size_in_ptrs(rec.holder_size);
         tinfo->init_instance = rec.init_instance;
@@ -998,11 +1000,21 @@ template <typename T> struct has_operator_delete_size<T, void_t<decltype(static_
     : std::true_type { };
 /// Call class-specific delete if it exists or global otherwise. Can also be an overload set.
 template <typename T, enable_if_t<has_operator_delete<T>::value, int> = 0>
-void call_operator_delete(T *p, size_t) { T::operator delete(p); }
+void call_operator_delete(T *p, size_t, size_t) { T::operator delete(p); }
 template <typename T, enable_if_t<!has_operator_delete<T>::value && has_operator_delete_size<T>::value, int> = 0>
-void call_operator_delete(T *p, size_t s) { T::operator delete(p, s); }
+void call_operator_delete(T *p, size_t s, size_t) { T::operator delete(p, s); }
 
-inline void call_operator_delete(void *p, size_t) { ::operator delete(p); }
+inline void call_operator_delete(void *p, size_t s, size_t a) {
+    (void)s; (void)a;
+#if defined(PYBIND11_CPP17)
+    if (a > __STDCPP_DEFAULT_NEW_ALIGNMENT__)
+        ::operator delete(p, s, std::align_val_t(a));
+    else
+        ::operator delete(p, s);
+#else
+    ::operator delete(p);
+#endif
+}
 
 NAMESPACE_END(detail)
 
@@ -1065,10 +1077,11 @@ public:
         record.name = name;
         record.type = &typeid(type);
         record.type_size = sizeof(conditional_t<has_alias, type_alias, type>);
+        record.type_align = alignof(conditional_t<has_alias, type_alias, type>&);
         record.holder_size = sizeof(holder_type);
         record.init_instance = init_instance;
         record.dealloc = dealloc;
-        record.default_holder = std::is_same<holder_type, std::unique_ptr<type>>::value;
+        record.default_holder = detail::is_instantiation<std::unique_ptr, holder_type>::value;
 
         set_operator_new<type>(&record);
 
@@ -1340,7 +1353,10 @@ private:
             v_h.set_holder_constructed(false);
         }
         else {
-            detail::call_operator_delete(v_h.value_ptr<type>(), v_h.type->type_size);
+            detail::call_operator_delete(v_h.value_ptr<type>(),
+                v_h.type->type_size,
+                v_h.type->type_align
+            );
         }
         v_h.value_ptr() = nullptr;
     }
@@ -1867,6 +1883,15 @@ public:
         tstate = (PyThreadState *) PYBIND11_TLS_GET_VALUE(internals.tstate);
 
         if (!tstate) {
+            /* Check if the GIL was acquired using the PyGILState_* API instead (e.g. if
+               calling from a Python thread). Since we use a different key, this ensures
+               we don't create a new thread state and deadlock in PyEval_AcquireThread
+               below. Note we don't save this state with internals.tstate, since we don't
+               create it we would fail to clear it (its reference count should be > 0). */
+            tstate = PyGILState_GetThisThreadState();
+        }
+
+        if (!tstate) {
             tstate = PyThreadState_New(internals.istate);
             #if !defined(NDEBUG)
                 if (!tstate)
@@ -2073,10 +2098,8 @@ template <class T> function get_overload(const T *this_ptr, const char *name) {
 
 NAMESPACE_END(PYBIND11_NAMESPACE)
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && !defined(__INTEL_COMPILER)
 #  pragma warning(pop)
-#elif defined(__INTEL_COMPILER)
-/* Leave ignored warnings on */
 #elif defined(__GNUG__) && !defined(__clang__)
 #  pragma GCC diagnostic pop
 #endif
