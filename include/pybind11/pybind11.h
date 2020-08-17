@@ -1172,7 +1172,14 @@ public:
                 "def_static(...) called with a non-static member function pointer");
         cpp_function cf(std::forward<Func>(f), name(name_), scope(*this),
                         sibling(getattr(*this, name_, none())), extra...);
-        attr(cf.name()) = staticmethod(cf);
+
+        auto tmp = staticmethod(cf);
+        PyCFunctionObject *fun_ptr = (PyCFunctionObject *) cf.ptr();
+        if (fun_ptr->m_ml->ml_doc) {
+            tmp.attr("__doc__") = strdup(const_cast<char *>(fun_ptr->m_ml->ml_doc));
+        }
+
+        attr(cf.name()) = tmp;
         return *this;
     }
 
