@@ -80,10 +80,10 @@ helper class that is defined as follows:
         }
     };
 
-The macro :func:`PYBIND11_OVERLOAD_PURE` should be used for pure virtual
-functions, and :func:`PYBIND11_OVERLOAD` should be used for functions which have
+The macro :c:macro:`PYBIND11_OVERLOAD_PURE` should be used for pure virtual
+functions, and :c:macro:`PYBIND11_OVERLOAD` should be used for functions which have
 a default implementation.  There are also two alternate macros
-:func:`PYBIND11_OVERLOAD_PURE_NAME` and :func:`PYBIND11_OVERLOAD_NAME` which
+:c:macro:`PYBIND11_OVERLOAD_PURE_NAME` and :c:macro:`PYBIND11_OVERLOAD_NAME` which
 take a string-valued name argument between the *Parent class* and *Name of the
 function* slots, which defines the name of function in Python. This is required
 when the C++ and Python versions of the
@@ -149,11 +149,16 @@ memory for the C++ portion of the instance will be left uninitialized, which
 will generally leave the C++ instance in an invalid state and cause undefined
 behavior if the C++ instance is subsequently used.
 
+.. versionadded:: 2.5.1
+
+   The default pybind11 metaclass will throw a ``TypeError`` when it detects
+   that ``__init__`` was not called by a derived class.
+
 Here is an example:
 
 .. code-block:: python
 
-    class Dachschund(Dog):
+    class Dachshund(Dog):
         def __init__(self, name):
             Dog.__init__(self) # Without this, undefined behavior may occur if the C++ portions are referenced.
             self.name = name
@@ -239,7 +244,7 @@ override the ``name()`` method):
     class PyDog : public Dog {
     public:
         using Dog::Dog; // Inherit constructors
-        std::string go(int n_times) override { PYBIND11_OVERLOAD_PURE(std::string, Dog, go, n_times); }
+        std::string go(int n_times) override { PYBIND11_OVERLOAD(std::string, Dog, go, n_times); }
         std::string name() override { PYBIND11_OVERLOAD(std::string, Dog, name, ); }
         std::string bark() override { PYBIND11_OVERLOAD(std::string, Dog, bark, ); }
     };
@@ -298,8 +303,8 @@ The classes are then registered with pybind11 using:
 .. code-block:: cpp
 
     py::class_<Animal, PyAnimal<>> animal(m, "Animal");
-    py::class_<Dog, PyDog<>> dog(m, "Dog");
-    py::class_<Husky, PyDog<Husky>> husky(m, "Husky");
+    py::class_<Dog, Animal, PyDog<>> dog(m, "Dog");
+    py::class_<Husky, Dog, PyDog<Husky>> husky(m, "Husky");
     // ... add animal, dog, husky definitions
 
 Note that ``Husky`` did not require a dedicated trampoline template class at
@@ -325,6 +330,10 @@ can now create a python class that inherits from ``Dog``:
 Extended trampoline class functionality
 =======================================
 
+.. _extended_class_functionality_forced_trampoline:
+
+Forced trampoline class initialisation
+--------------------------------------
 The trampoline classes described in the previous sections are, by default, only
 initialized when needed.  More specifically, they are initialized when a python
 class actually inherits from a registered type (instead of merely creating an
@@ -351,6 +360,45 @@ ensuring member initialization and (eventual) destruction.
 
     See the file :file:`tests/test_virtual_functions.cpp` for complete examples
     showing both normal and forced trampoline instantiation.
+
+Different method signatures
+---------------------------
+The macro's introduced in :ref:`overriding_virtuals` cover most of the standard
+use cases when exposing C++ classes to Python. Sometimes it is hard or unwieldy
+to create a direct one-on-one mapping between the arguments and method return
+type.
+
+An example would be when the C++ signature contains output arguments using
+references (See also :ref:`faq_reference_arguments`). Another way of solving
+this is to use the method body of the trampoline class to do conversions to the
+input and return of the Python method.
+
+The main building block to do so is the :func:`get_overload`, this function
+allows retrieving a method implemented in Python from within the trampoline's
+methods. Consider for example a C++ method which has the signature
+``bool myMethod(int32_t& value)``, where the return indicates whether
+something should be done with the ``value``. This can be made convenient on the
+Python side by allowing the Python function to return ``None`` or an ``int``:
+
+.. code-block:: cpp
+
+    bool MyClass::myMethod(int32_t& value)
+    {
+        pybind11::gil_scoped_acquire gil;  // Acquire the GIL while in this scope.
+        // Try to look up the overloaded method on the Python side.
+        pybind11::function overload = pybind11::get_overload(this, "myMethod");
+        if (overload) {  // method is found
+            auto obj = overload(value);  // Call the Python function.
+            if (py::isinstance<py::int_>(obj)) {  // check if it returned a Python integer type
+                value = obj.cast<int32_t>();  // Cast it and assign it to the value.
+                return true;  // Return true; value should be used.
+            } else {
+                return false;  // Python returned none, return false.
+            }
+        }
+        return false;  // Alternatively return MyClass::myMethod(value);
+    }
+
 
 .. _custom_constructors:
 
@@ -511,6 +559,44 @@ crucial that instances are deallocated on the C++ side to avoid memory leaks.
     py::class_<MyClass, std::unique_ptr<MyClass, py::nodelete>>(m, "MyClass")
         .def(py::init<>())
 
+.. _destructors_that_call_python:
+
+Destructors that call Python
+============================
+
+If a Python function is invoked from a C++ destructor, an exception may be thrown
+of type :class:`error_already_set`. If this error is thrown out of a class destructor,
+``std::terminate()`` will be called, terminating the process. Class destructors
+must catch all exceptions of type :class:`error_already_set` to discard the Python
+exception using :func:`error_already_set::discard_as_unraisable`.
+
+Every Python function should be treated as *possibly throwing*. When a Python generator
+stops yielding items, Python will throw a ``StopIteration`` exception, which can pass
+though C++ destructors if the generator's stack frame holds the last reference to C++
+objects.
+
+For more information, see :ref:`the documentation on exceptions <unraisable_exceptions>`.
+
+.. code-block:: cpp
+
+    class MyClass {
+    public:
+        ~MyClass() {
+            try {
+                py::print("Even printing is dangerous in a destructor");
+                py::exec("raise ValueError('This is an unraisable exception')");
+            } catch (py::error_already_set &e) {
+                // error_context should be information about where/why the occurred,
+                // e.g. use __func__ to get the name of the current function
+                e.discard_as_unraisable(__func__);
+            }
+        }
+    };
+
+.. note::
+
+    pybind11 does not support C++ destructors marked ``noexcept(false)``.
+
 .. _implicit_conversions:
 
 Implicit conversions
@@ -619,6 +705,7 @@ to Python.
             .def(py::self *= float())
             .def(float() * py::self)
             .def(py::self * float())
+            .def(-py::self)
             .def("__repr__", &Vector2::toString);
     }
 
@@ -724,13 +811,17 @@ An instance can now be pickled as follows:
     p.setExtra(15)
     data = pickle.dumps(p, 2)
 
-Note that only the cPickle module is supported on Python 2.7. The second
-argument to ``dumps`` is also crucial: it selects the pickle protocol version
-2, since the older version 1 is not supported. Newer versions are also fine—for
-instance, specify ``-1`` to always use the latest available version. Beware:
-failure to follow these instructions will cause important pybind11 memory
-allocation routines to be skipped during unpickling, which will likely lead to
-memory corruption and/or segmentation faults.
+
+.. note::
+    Note that only the cPickle module is supported on Python 2.7.
+
+    The second argument to ``dumps`` is also crucial: it selects the pickle
+    protocol version 2, since the older version 1 is not supported. Newer
+    versions are also fine—for instance, specify ``-1`` to always use the
+    latest available version. Beware: failure to follow these instructions
+    will cause important pybind11 memory allocation routines to be skipped
+    during unpickling, which will likely lead to memory corruption and/or
+    segmentation faults.
 
 .. seealso::
 
@@ -739,6 +830,38 @@ memory corruption and/or segmentation faults.
     detail.
 
 .. [#f3] http://docs.python.org/3/library/pickle.html#pickling-class-instances
+
+Deepcopy support
+================
+
+Python normally uses references in assignments. Sometimes a real copy is needed
+to prevent changing all copies. The ``copy`` module [#f5]_ provides these
+capabilities.
+
+On Python 3, a class with pickle support is automatically also (deep)copy
+compatible. However, performance can be improved by adding custom
+``__copy__`` and ``__deepcopy__`` methods. With Python 2.7, these custom methods
+are mandatory for (deep)copy compatibility, because pybind11 only supports
+cPickle.
+
+For simple classes (deep)copy can be enabled by using the copy constructor,
+which should look as follows:
+
+.. code-block:: cpp
+
+    py::class_<Copyable>(m, "Copyable")
+        .def("__copy__",  [](const Copyable &self) {
+            return Copyable(self);
+        })
+        .def("__deepcopy__", [](const Copyable &self, py::dict) {
+            return Copyable(self);
+        }, "memo"_a);
+
+.. note::
+
+    Dynamic attributes will not be copied in this example.
+
+.. [#f5] https://docs.python.org/3/library/copy.html
 
 Multiple Inheritance
 ====================
@@ -997,6 +1120,32 @@ described trampoline:
     requires a more explicit function binding in the form of
     ``.def("foo", static_cast<int (A::*)() const>(&Publicist::foo));``
     where ``int (A::*)() const`` is the type of ``A::foo``.
+
+Binding final classes
+=====================
+
+Some classes may not be appropriate to inherit from. In C++11, classes can
+use the ``final`` specifier to ensure that a class cannot be inherited from.
+The ``py::is_final`` attribute can be used to ensure that Python classes
+cannot inherit from a specified type. The underlying C++ type does not need
+to be declared final.
+
+.. code-block:: cpp
+
+    class IsFinal final {};
+
+    py::class_<IsFinal>(m, "IsFinal", py::is_final());
+
+When you try to inherit from such a class in Python, you will now get this
+error:
+
+.. code-block:: pycon
+
+    >>> class PyFinalChild(IsFinal):
+    ...     pass
+    TypeError: type 'IsFinal' is not an acceptable base type
+
+.. note:: This attribute is currently ignored on PyPy
 
 Custom automatic downcasters
 ============================

@@ -14,14 +14,14 @@
 #include <utility>
 #include <type_traits>
 
-NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
+PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 
 /* A few forward declarations */
 class handle; class object;
 class str; class iterator;
 struct arg; struct arg_v;
 
-NAMESPACE_BEGIN(detail)
+PYBIND11_NAMESPACE_BEGIN(detail)
 class args_proxy;
 inline bool isinstance_generic(handle obj, const std::type_info &tp);
 
@@ -158,7 +158,7 @@ private:
     bool rich_compare(object_api const &other, int value) const;
 };
 
-NAMESPACE_END(detail)
+PYBIND11_NAMESPACE_END(detail)
 
 /** \rst
     Holds a reference to a Python object (no reference counting)
@@ -311,9 +311,9 @@ template <typename T> T reinterpret_borrow(handle h) { return {h, object::borrow
 \endrst */
 template <typename T> T reinterpret_steal(handle h) { return {h, object::stolen_t{}}; }
 
-NAMESPACE_BEGIN(detail)
+PYBIND11_NAMESPACE_BEGIN(detail)
 inline std::string error_string();
-NAMESPACE_END(detail)
+PYBIND11_NAMESPACE_END(detail)
 
 /// Fetch and hold an error which was already set in Python.  An instance of this is typically
 /// thrown to propagate python-side errors back through C++ which can either be caught manually or
@@ -336,6 +336,20 @@ public:
     /// already set it is cleared first.  After this call, the current object no longer stores the
     /// error variables (but the `.what()` string is still available).
     void restore() { PyErr_Restore(m_type.release().ptr(), m_value.release().ptr(), m_trace.release().ptr()); }
+
+    /// If it is impossible to raise the currently-held error, such as in destructor, we can write
+    /// it out using Python's unraisable hook (sys.unraisablehook). The error context should be
+    /// some object whose repr() helps identify the location of the error. Python already knows the
+    /// type and value of the error, so there is no need to repeat that. For example, __func__ could
+    /// be helpful. After this call, the current object no longer stores the error variables,
+    /// and neither does Python.
+    void discard_as_unraisable(object err_context) {
+        restore();
+        PyErr_WriteUnraisable(err_context.ptr());
+    }
+    void discard_as_unraisable(const char *err_context) {
+        discard_as_unraisable(reinterpret_steal<object>(PYBIND11_FROM_STRING(err_context)));
+    }
 
     // Does nothing; provided for backwards compatibility.
     PYBIND11_DEPRECATED("Use of error_already_set.clear() is deprecated")
@@ -370,7 +384,7 @@ bool isinstance(handle obj) { return T::check_(obj); }
 template <typename T, detail::enable_if_t<!std::is_base_of<object, T>::value, int> = 0>
 bool isinstance(handle obj) { return detail::isinstance_generic(obj, typeid(T)); }
 
-template <> inline bool isinstance<handle>(handle obj) = delete;
+template <> inline bool isinstance<handle>(handle) = delete;
 template <> inline bool isinstance<object>(handle obj) { return obj.ptr() != nullptr; }
 
 /// \ingroup python_builtins
@@ -446,7 +460,7 @@ inline ssize_t hash(handle obj) {
 
 /// @} python_builtins
 
-NAMESPACE_BEGIN(detail)
+PYBIND11_NAMESPACE_BEGIN(detail)
 inline handle get_function(handle value) {
     if (value) {
 #if PY_MAJOR_VERSION >= 3
@@ -520,7 +534,7 @@ private:
     mutable object cache;
 };
 
-NAMESPACE_BEGIN(accessor_policies)
+PYBIND11_NAMESPACE_BEGIN(accessor_policies)
 struct obj_attr {
     using key_type = object;
     static object get(handle obj, handle key) { return getattr(obj, key); }
@@ -597,7 +611,7 @@ struct tuple_item {
         }
     }
 };
-NAMESPACE_END(accessor_policies)
+PYBIND11_NAMESPACE_END(accessor_policies)
 
 /// STL iterator template used for tuple, list, sequence and dict
 template <typename Policy>
@@ -638,7 +652,7 @@ public:
     friend bool operator<=(const It &a, const It &b) { return !(a > b); }
 };
 
-NAMESPACE_BEGIN(iterator_policies)
+PYBIND11_NAMESPACE_BEGIN(iterator_policies)
 /// Quick proxy class needed to implement ``operator->`` for iterators which can't return pointers
 template <typename T>
 struct arrow_proxy {
@@ -708,10 +722,10 @@ protected:
 
 private:
     handle obj;
-    PyObject *key, *value;
+    PyObject *key = nullptr, *value = nullptr;
     ssize_t pos = -1;
 };
-NAMESPACE_END(iterator_policies)
+PYBIND11_NAMESPACE_END(iterator_policies)
 
 #if !defined(PYPY_VERSION)
 using tuple_iterator = generic_iterator<iterator_policies::sequence_fast_readonly>;
@@ -736,11 +750,11 @@ inline bool PyIterable_Check(PyObject *obj) {
 }
 
 inline bool PyNone_Check(PyObject *o) { return o == Py_None; }
-#if PY_MAJOR_VERSION >= 3
 inline bool PyEllipsis_Check(PyObject *o) { return o == Py_Ellipsis; }
-#endif
 
 inline bool PyUnicode_Check_Permissive(PyObject *o) { return PyUnicode_Check(o) || PYBIND11_BYTES_CHECK(o); }
+
+inline bool PyStaticMethod_Check(PyObject *o) { return o->ob_type == &PyStaticMethod_Type; }
 
 class kwargs_proxy : public handle {
 public:
@@ -768,7 +782,7 @@ class simple_collector;
 template <return_value_policy policy = return_value_policy::automatic_reference>
 class unpacking_collector;
 
-NAMESPACE_END(detail)
+PYBIND11_NAMESPACE_END(detail)
 
 // TODO: After the deprecated constructors are removed, this macro can be simplified by
 //       inheriting ctors: `using Parent::Parent`. It's not an option right now because
@@ -931,8 +945,8 @@ private:
     /// Return string representation -- always returns a new reference, even if already a str
     static PyObject *raw_str(PyObject *op) {
         PyObject *str_value = PyObject_Str(op);
-#if PY_MAJOR_VERSION < 3
         if (!str_value) throw error_already_set();
+#if PY_MAJOR_VERSION < 3
         PyObject *unicode = PyUnicode_FromEncodedObject(str_value, "utf-8", nullptr);
         Py_XDECREF(str_value); str_value = unicode;
 #endif
@@ -978,6 +992,9 @@ public:
         return std::string(buffer, (size_t) length);
     }
 };
+// Note: breathe >= 4.17.0 will fail to build docs if the below two constructors
+// are included in the doxygen group; close here and reopen after as a workaround
+/// @} pytypes
 
 inline bytes::bytes(const pybind11::str &s) {
     object temp = s;
@@ -1007,19 +1024,19 @@ inline str::str(const bytes& b) {
     m_ptr = obj.release().ptr();
 }
 
+/// \addtogroup pytypes
+/// @{
 class none : public object {
 public:
     PYBIND11_OBJECT(none, object, detail::PyNone_Check)
     none() : object(Py_None, borrowed_t{}) { }
 };
 
-#if PY_MAJOR_VERSION >= 3
 class ellipsis : public object {
 public:
     PYBIND11_OBJECT(ellipsis, object, detail::PyEllipsis_Check)
     ellipsis() : object(Py_Ellipsis, borrowed_t{}) { }
 };
-#endif
 
 class bool_ : public object {
 public:
@@ -1038,7 +1055,7 @@ private:
     }
 };
 
-NAMESPACE_BEGIN(detail)
+PYBIND11_NAMESPACE_BEGIN(detail)
 // Converts a value to the given unsigned type.  If an error occurs, you get back (Unsigned) -1;
 // otherwise you get back the unsigned long or unsigned long long value cast to (Unsigned).
 // (The distinction is critically important when casting a returned -1 error value to some other
@@ -1058,7 +1075,7 @@ Unsigned as_unsigned(PyObject *o) {
         return v == (unsigned long long) -1 && PyErr_Occurred() ? (Unsigned) -1 : (Unsigned) v;
     }
 }
-NAMESPACE_END(detail)
+PYBIND11_NAMESPACE_END(detail)
 
 class int_ : public object {
 public:
@@ -1131,6 +1148,13 @@ public:
                                     (ssize_t *) stop, (ssize_t *) step,
                                     (ssize_t *) slicelength) == 0;
     }
+    bool compute(ssize_t length, ssize_t *start, ssize_t *stop, ssize_t *step,
+      ssize_t *slicelength) const {
+      return PySlice_GetIndicesEx((PYBIND11_SLICE_OBJECT *) m_ptr,
+          length, start,
+          stop, step,
+          slicelength) == 0;
+    }
 };
 
 class capsule : public object {
@@ -1193,6 +1217,7 @@ public:
         if (!m_ptr) pybind11_fail("Could not allocate tuple object!");
     }
     size_t size() const { return (size_t) PyTuple_Size(m_ptr); }
+    bool empty() const { return size() == 0; }
     detail::tuple_accessor operator[](size_t index) const { return {*this, index}; }
     detail::item_accessor operator[](handle h) const { return object::operator[](h); }
     detail::tuple_iterator begin() const { return {*this, 0}; }
@@ -1212,11 +1237,13 @@ public:
     explicit dict(Args &&...args) : dict(collector(std::forward<Args>(args)...).kwargs()) { }
 
     size_t size() const { return (size_t) PyDict_Size(m_ptr); }
+    bool empty() const { return size() == 0; }
     detail::dict_iterator begin() const { return {*this, 0}; }
     detail::dict_iterator end() const { return {}; }
     void clear() const { PyDict_Clear(ptr()); }
-    bool contains(handle key) const { return PyDict_Contains(ptr(), key.ptr()) == 1; }
-    bool contains(const char *key) const { return PyDict_Contains(ptr(), pybind11::str(key).ptr()) == 1; }
+    template <typename T> bool contains(T &&key) const {
+        return PyDict_Contains(m_ptr, detail::object_or_cast(std::forward<T>(key)).ptr()) == 1;
+    }
 
 private:
     /// Call the `dict` Python type -- always returns a new reference
@@ -1230,7 +1257,13 @@ private:
 class sequence : public object {
 public:
     PYBIND11_OBJECT_DEFAULT(sequence, object, PySequence_Check)
-    size_t size() const { return (size_t) PySequence_Size(m_ptr); }
+    size_t size() const {
+        ssize_t result = PySequence_Size(m_ptr);
+        if (result == -1)
+            throw error_already_set();
+        return (size_t) result;
+    }
+    bool empty() const { return size() == 0; }
     detail::sequence_accessor operator[](size_t index) const { return {*this, index}; }
     detail::item_accessor operator[](handle h) const { return object::operator[](h); }
     detail::sequence_iterator begin() const { return {*this, 0}; }
@@ -1244,12 +1277,17 @@ public:
         if (!m_ptr) pybind11_fail("Could not allocate list object!");
     }
     size_t size() const { return (size_t) PyList_Size(m_ptr); }
+    bool empty() const { return size() == 0; }
     detail::list_accessor operator[](size_t index) const { return {*this, index}; }
     detail::item_accessor operator[](handle h) const { return object::operator[](h); }
     detail::list_iterator begin() const { return {*this, 0}; }
     detail::list_iterator end() const { return {*this, PyList_GET_SIZE(m_ptr)}; }
     template <typename T> void append(T &&val) const {
         PyList_Append(m_ptr, detail::object_or_cast(std::forward<T>(val)).ptr());
+    }
+    template <typename T> void insert(size_t index, T &&val) const {
+        PyList_Insert(m_ptr, static_cast<ssize_t>(index),
+            detail::object_or_cast(std::forward<T>(val)).ptr());
     }
 };
 
@@ -1263,10 +1301,14 @@ public:
         if (!m_ptr) pybind11_fail("Could not allocate set object!");
     }
     size_t size() const { return (size_t) PySet_Size(m_ptr); }
+    bool empty() const { return size() == 0; }
     template <typename T> bool add(T &&val) const {
         return PySet_Add(m_ptr, detail::object_or_cast(std::forward<T>(val)).ptr()) == 0;
     }
     void clear() const { PySet_Clear(m_ptr); }
+    template <typename T> bool contains(T &&val) const {
+        return PySet_Contains(m_ptr, detail::object_or_cast(std::forward<T>(val)).ptr()) == 1;
+    }
 };
 
 class function : public object {
@@ -1281,11 +1323,16 @@ public:
     bool is_cpp_function() const { return (bool) cpp_function(); }
 };
 
+class staticmethod : public object {
+public:
+    PYBIND11_OBJECT_CVT(staticmethod, object, detail::PyStaticMethod_Check, PyStaticMethod_New)
+};
+
 class buffer : public object {
 public:
     PYBIND11_OBJECT_DEFAULT(buffer, object, PyObject_CheckBuffer)
 
-    buffer_info request(bool writable = false) {
+    buffer_info request(bool writable = false) const {
         int flags = PyBUF_STRIDES | PyBUF_FORMAT;
         if (writable) flags |= PyBUF_WRITABLE;
         Py_buffer *view = new Py_buffer();
@@ -1299,35 +1346,139 @@ public:
 
 class memoryview : public object {
 public:
-    explicit memoryview(const buffer_info& info) {
-        static Py_buffer buf { };
-        // Py_buffer uses signed sizes, strides and shape!..
-        static std::vector<Py_ssize_t> py_strides { };
-        static std::vector<Py_ssize_t> py_shape { };
-        buf.buf = info.ptr;
-        buf.itemsize = info.itemsize;
-        buf.format = const_cast<char *>(info.format.c_str());
-        buf.ndim = (int) info.ndim;
-        buf.len = info.size;
-        py_strides.clear();
-        py_shape.clear();
-        for (size_t i = 0; i < (size_t) info.ndim; ++i) {
-            py_strides.push_back(info.strides[i]);
-            py_shape.push_back(info.shape[i]);
-        }
-        buf.strides = py_strides.data();
-        buf.shape = py_shape.data();
-        buf.suboffsets = nullptr;
-        buf.readonly = false;
-        buf.internal = nullptr;
+    PYBIND11_OBJECT_CVT(memoryview, object, PyMemoryView_Check, PyMemoryView_FromObject)
 
-        m_ptr = PyMemoryView_FromBuffer(&buf);
+    /** \rst
+        Creates ``memoryview`` from ``buffer_info``.
+
+        ``buffer_info`` must be created from ``buffer::request()``. Otherwise
+        throws an exception.
+
+        For creating a ``memoryview`` from objects that support buffer protocol,
+        use ``memoryview(const object& obj)`` instead of this constructor.
+     \endrst */
+    explicit memoryview(const buffer_info& info) {
+        if (!info.view())
+            pybind11_fail("Prohibited to create memoryview without Py_buffer");
+        // Note: PyMemoryView_FromBuffer never increments obj reference.
+        m_ptr = (info.view()->obj) ?
+            PyMemoryView_FromObject(info.view()->obj) :
+            PyMemoryView_FromBuffer(info.view());
         if (!m_ptr)
             pybind11_fail("Unable to create memoryview from buffer descriptor");
     }
 
-    PYBIND11_OBJECT_CVT(memoryview, object, PyMemoryView_Check, PyMemoryView_FromObject)
+    /** \rst
+        Creates ``memoryview`` from static buffer.
+
+        This method is meant for providing a ``memoryview`` for C/C++ buffer not
+        managed by Python. The caller is responsible for managing the lifetime
+        of ``ptr`` and ``format``, which MUST outlive the memoryview constructed
+        here.
+
+        See also: Python C API documentation for `PyMemoryView_FromBuffer`_.
+
+        .. _PyMemoryView_FromBuffer: https://docs.python.org/c-api/memoryview.html#c.PyMemoryView_FromBuffer
+
+        :param ptr: Pointer to the buffer.
+        :param itemsize: Byte size of an element.
+        :param format: Pointer to the null-terminated format string. For
+            homogeneous Buffers, this should be set to
+            ``format_descriptor<T>::value``.
+        :param shape: Shape of the tensor (1 entry per dimension).
+        :param strides: Number of bytes between adjacent entries (for each
+            per dimension).
+        :param readonly: Flag to indicate if the underlying storage may be
+            written to.
+     \endrst */
+    static memoryview from_buffer(
+        void *ptr, ssize_t itemsize, const char *format,
+        detail::any_container<ssize_t> shape,
+        detail::any_container<ssize_t> strides, bool readonly = false);
+
+    static memoryview from_buffer(
+        const void *ptr, ssize_t itemsize, const char *format,
+        detail::any_container<ssize_t> shape,
+        detail::any_container<ssize_t> strides) {
+        return memoryview::from_buffer(
+            const_cast<void*>(ptr), itemsize, format, shape, strides, true);
+    }
+
+    template<typename T>
+    static memoryview from_buffer(
+        T *ptr, detail::any_container<ssize_t> shape,
+        detail::any_container<ssize_t> strides, bool readonly = false) {
+        return memoryview::from_buffer(
+            reinterpret_cast<void*>(ptr), sizeof(T),
+            format_descriptor<T>::value, shape, strides, readonly);
+    }
+
+    template<typename T>
+    static memoryview from_buffer(
+        const T *ptr, detail::any_container<ssize_t> shape,
+        detail::any_container<ssize_t> strides) {
+        return memoryview::from_buffer(
+            const_cast<T*>(ptr), shape, strides, true);
+    }
+
+#if PY_MAJOR_VERSION >= 3
+    /** \rst
+        Creates ``memoryview`` from static memory.
+
+        This method is meant for providing a ``memoryview`` for C/C++ buffer not
+        managed by Python. The caller is responsible for managing the lifetime
+        of ``mem``, which MUST outlive the memoryview constructed here.
+
+        This method is not available in Python 2.
+
+        See also: Python C API documentation for `PyMemoryView_FromBuffer`_.
+
+        .. _PyMemoryView_FromMemory: https://docs.python.org/c-api/memoryview.html#c.PyMemoryView_FromMemory
+     \endrst */
+    static memoryview from_memory(void *mem, ssize_t size, bool readonly = false) {
+        PyObject* ptr = PyMemoryView_FromMemory(
+            reinterpret_cast<char*>(mem), size,
+            (readonly) ? PyBUF_READ : PyBUF_WRITE);
+        if (!ptr)
+            pybind11_fail("Could not allocate memoryview object!");
+        return memoryview(object(ptr, stolen_t{}));
+    }
+
+    static memoryview from_memory(const void *mem, ssize_t size) {
+        return memoryview::from_memory(const_cast<void*>(mem), size, true);
+    }
+#endif
 };
+
+#ifndef DOXYGEN_SHOULD_SKIP_THIS
+inline memoryview memoryview::from_buffer(
+    void *ptr, ssize_t itemsize, const char* format,
+    detail::any_container<ssize_t> shape,
+    detail::any_container<ssize_t> strides, bool readonly) {
+    size_t ndim = shape->size();
+    if (ndim != strides->size())
+        pybind11_fail("memoryview: shape length doesn't match strides length");
+    ssize_t size = ndim ? 1 : 0;
+    for (size_t i = 0; i < ndim; ++i)
+        size *= (*shape)[i];
+    Py_buffer view;
+    view.buf = ptr;
+    view.obj = nullptr;
+    view.len = size * itemsize;
+    view.readonly = static_cast<int>(readonly);
+    view.itemsize = itemsize;
+    view.format = const_cast<char*>(format);
+    view.ndim = static_cast<int>(ndim);
+    view.shape = shape->data();
+    view.strides = strides->data();
+    view.suboffsets = nullptr;
+    view.internal = nullptr;
+    PyObject* obj = PyMemoryView_FromBuffer(&view);
+    if (!obj)
+        throw error_already_set();
+    return memoryview(object(obj, stolen_t{}));
+}
+#endif  // DOXYGEN_SHOULD_SKIP_THIS
 /// @} pytypes
 
 /// \addtogroup python_builtins
@@ -1336,6 +1487,21 @@ inline size_t len(handle h) {
     ssize_t result = PyObject_Length(h.ptr());
     if (result < 0)
         pybind11_fail("Unable to compute length of object");
+    return (size_t) result;
+}
+
+inline size_t len_hint(handle h) {
+#if PY_VERSION_HEX >= 0x03040000
+    ssize_t result = PyObject_LengthHint(h.ptr(), 0);
+#else
+    ssize_t result = PyObject_Length(h.ptr());
+#endif
+    if (result < 0) {
+        // Sometimes a length can't be determined at all (eg generators)
+        // In which case simply return 0
+        PyErr_Clear();
+        return 0;
+    }
     return (size_t) result;
 }
 
@@ -1357,7 +1523,7 @@ inline iterator iter(handle obj) {
 }
 /// @} python_builtins
 
-NAMESPACE_BEGIN(detail)
+PYBIND11_NAMESPACE_BEGIN(detail)
 template <typename D> iterator object_api<D>::begin() const { return iter(derived()); }
 template <typename D> iterator object_api<D>::end() const { return iterator::sentinel(); }
 template <typename D> item_accessor object_api<D>::operator[](handle key) const {
@@ -1438,5 +1604,5 @@ PYBIND11_MATH_OPERATOR_BINARY(operator>>=, PyNumber_InPlaceRshift)
 #undef PYBIND11_MATH_OPERATOR_UNARY
 #undef PYBIND11_MATH_OPERATOR_BINARY
 
-NAMESPACE_END(detail)
-NAMESPACE_END(PYBIND11_NAMESPACE)
+PYBIND11_NAMESPACE_END(detail)
+PYBIND11_NAMESPACE_END(PYBIND11_NAMESPACE)

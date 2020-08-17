@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import pytest
 
 from pybind11_tests import stl as m
@@ -56,7 +57,9 @@ def test_map(doc):
     """std::map <-> dict"""
     d = m.cast_map()
     assert d == {"key": "value"}
+    assert "key" in d
     d["key2"] = "value2"
+    assert "key2" in d
     assert m.load_map(d)
 
     assert doc(m.cast_map) == "cast_map() -> Dict[str, str]"
@@ -125,6 +128,11 @@ def test_optional():
 
     assert m.nodefer_none_optional(None)
 
+    holder = m.OptionalHolder()
+    mvalue = holder.member
+    assert mvalue.initialized
+    assert holder.member_initialized()
+
 
 @pytest.mark.skipif(not hasattr(m, "has_exp_optional"), reason='no <experimental/optional>')
 def test_exp_optional():
@@ -145,6 +153,11 @@ def test_exp_optional():
     assert m.test_no_assign_exp(None) == 42
     assert m.test_no_assign_exp(m.NoAssign(43)) == 43
     pytest.raises(TypeError, m.test_no_assign_exp, 43)
+
+    holder = m.OptionalExpHolder()
+    mvalue = holder.member
+    assert mvalue.initialized
+    assert holder.member_initialized()
 
 
 @pytest.mark.skipif(not hasattr(m, "load_variant"), reason='no <variant>')

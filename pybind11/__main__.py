@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function
 
 import argparse
@@ -10,8 +11,7 @@ from . import get_include
 def print_includes():
     dirs = [sysconfig.get_path('include'),
             sysconfig.get_path('platinclude'),
-            get_include(),
-            get_include(True)]
+            get_include()]
 
     # Make unique but preserve order
     unique_dirs = []

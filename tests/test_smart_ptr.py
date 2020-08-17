@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import pytest
 from pybind11_tests import smart_ptr as m
 from pybind11_tests import ConstructorStats
@@ -128,7 +129,7 @@ def test_unique_deleter():
     o = m.MyObject4b(23)
     assert o.value == 23
     cstats4a = ConstructorStats.get(m.MyObject4a)
-    assert cstats4a.alive() == 2  # Two becaue of previous test
+    assert cstats4a.alive() == 2  # Two because of previous test
     cstats4b = ConstructorStats.get(m.MyObject4b)
     assert cstats4b.alive() == 1
     del o
@@ -218,7 +219,10 @@ def test_shared_ptr_from_this_and_references():
 
 def test_move_only_holder():
     a = m.TypeWithMoveOnlyHolder.make()
+    b = m.TypeWithMoveOnlyHolder.make_as_object()
     stats = ConstructorStats.get(m.TypeWithMoveOnlyHolder)
+    assert stats.alive() == 2
+    del b
     assert stats.alive() == 1
     del a
     assert stats.alive() == 0
@@ -272,7 +276,8 @@ def test_smart_ptr_from_default():
     instance = m.HeldByDefaultHolder()
     with pytest.raises(RuntimeError) as excinfo:
         m.HeldByDefaultHolder.load_shared_ptr(instance)
-    assert "Unable to load a custom holder type from a default-holder instance" in str(excinfo)
+    assert "Unable to load a custom holder type from a " \
+           "default-holder instance" in str(excinfo.value)
 
 
 def test_shared_ptr_gc():

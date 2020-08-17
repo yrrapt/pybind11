@@ -65,6 +65,25 @@ struct PythonCallInDestructor {
     py::dict d;
 };
 
+
+
+struct PythonAlreadySetInDestructor {
+    PythonAlreadySetInDestructor(const py::str &s) : s(s) {}
+    ~PythonAlreadySetInDestructor() {
+        py::dict foo;
+        try {
+            // Assign to a py::object to force read access of nonexistent dict entry
+            py::object o = foo["bar"];
+        }
+        catch (py::error_already_set& ex) {
+            ex.discard_as_unraisable(s);
+        }
+    }
+
+    py::str s;
+};
+
+
 TEST_SUBMODULE(exceptions, m) {
     m.def("throw_std_exception", []() {
         throw std::runtime_error("This exception was intentionally thrown.");
@@ -116,6 +135,7 @@ TEST_SUBMODULE(exceptions, m) {
     m.def("throws5", []() { throw MyException5("this is a helper-defined translated exception"); });
     m.def("throws5_1", []() { throw MyException5_1("MyException5 subclass"); });
     m.def("throws_logic_error", []() { throw std::logic_error("this error should fall through to the standard handler"); });
+    m.def("throws_overflow_error", []() {throw std::overflow_error(""); });
     m.def("exception_matches", []() {
         py::dict foo;
         try {
@@ -180,6 +200,11 @@ TEST_SUBMODULE(exceptions, m) {
             return true;
         }
         return false;
+    });
+
+    m.def("python_alreadyset_in_destructor", [](py::str s) {
+        PythonAlreadySetInDestructor alreadyset_in_destructor(s);
+        return true;
     });
 
     // test_nested_throws

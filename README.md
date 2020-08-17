@@ -5,7 +5,7 @@
 [![Documentation Status](https://readthedocs.org/projects/pybind11/badge/?version=master)](http://pybind11.readthedocs.org/en/master/?badge=master)
 [![Documentation Status](https://readthedocs.org/projects/pybind11/badge/?version=stable)](http://pybind11.readthedocs.org/en/stable/?badge=stable)
 [![Gitter chat](https://img.shields.io/gitter/room/gitterHQ/gitter.svg)](https://gitter.im/pybind/Lobby)
-[![Build Status](https://travis-ci.org/pybind/pybind11.svg?branch=master)](https://travis-ci.org/pybind/pybind11)
+[![CI](https://github.com/pybind/pybind11/workflows/CI/badge.svg)](https://github.com/pybind/pybind11/actions)
 [![Build status](https://ci.appveyor.com/api/projects/status/riaj54pn4h08xy40?svg=true)](https://ci.appveyor.com/project/wjakob/pybind11)
 
 **pybind11** is a lightweight header-only library that exposes C++ types in Python
@@ -105,6 +105,7 @@ In addition to the core functionality, pybind11 provides some extra goodies:
 This project was created by [Wenzel Jakob](http://rgl.epfl.ch/people/wjakob).
 Significant features and/or improvements to the code were contributed by
 Jonas Adler,
+Lori A. Burns,
 Sylvain Corlay,
 Trent Houliston,
 Axel Huebl,
@@ -117,6 +118,7 @@ Ben Pritchard,
 Jason Rhinelander,
 Boris Schäling,
 Pim Schellart,
+Henry Schreiner,
 Ivan Smirnov, and
 Patrick Stewart.
 

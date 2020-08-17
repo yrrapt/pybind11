@@ -1,12 +1,15 @@
+# -*- coding: utf-8 -*-
+import io
 import struct
+
 import pytest
+
+import env  # noqa: F401
+
 from pybind11_tests import buffers as m
 from pybind11_tests import ConstructorStats
 
-pytestmark = pytest.requires_numpy
-
-with pytest.suppress(ImportError):
-    import numpy as np
+np = pytest.importorskip("numpy")
 
 
 def test_from_python():
@@ -32,9 +35,7 @@ def test_from_python():
     assert cstats.move_assignments == 0
 
 
-# PyPy: Memory leak in the "np.array(m, copy=False)" call
-# https://bitbucket.org/pypy/pypy/issues/2444
-@pytest.unsupported_on_pypy
+# https://foss.heptapod.net/pypy/pypy/-/issues/2444
 def test_to_python():
     mat = m.Matrix(5, 4)
     assert memoryview(mat).shape == (5, 4)
@@ -69,7 +70,6 @@ def test_to_python():
     assert cstats.move_assignments == 0
 
 
-@pytest.unsupported_on_pypy
 def test_inherited_protocol():
     """SquareMatrix is derived from Matrix and inherits the buffer protocol"""
 
@@ -78,10 +78,32 @@ def test_inherited_protocol():
     assert np.asarray(matrix).shape == (5, 5)
 
 
-@pytest.unsupported_on_pypy
 def test_pointer_to_member_fn():
     for cls in [m.Buffer, m.ConstBuffer, m.DerivedBuffer]:
         buf = cls()
         buf.value = 0x12345678
         value = struct.unpack('i', bytearray(buf))[0]
         assert value == 0x12345678
+
+
+def test_readonly_buffer():
+    buf = m.BufferReadOnly(0x64)
+    view = memoryview(buf)
+    assert view[0] == b'd' if env.PY2 else 0x64
+    assert view.readonly
+
+
+def test_selective_readonly_buffer():
+    buf = m.BufferReadOnlySelect()
+
+    memoryview(buf)[0] = b'd' if env.PY2 else 0x64
+    assert buf.value == 0x64
+
+    io.BytesIO(b'A').readinto(buf)
+    assert buf.value == ord(b'A')
+
+    buf.readonly = True
+    with pytest.raises(TypeError):
+        memoryview(buf)[0] = b'\0' if env.PY2 else 0
+    with pytest.raises(TypeError):
+        io.BytesIO(b'1').readinto(buf)
