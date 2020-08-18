@@ -1173,13 +1173,7 @@ public:
         cpp_function cf(std::forward<Func>(f), name(name_), scope(*this),
                         sibling(getattr(*this, name_, none())), extra...);
 
-        auto tmp = staticmethod(cf);
-        PyCFunctionObject *fun_ptr = (PyCFunctionObject *) cf.ptr();
-        if (fun_ptr->m_ml->ml_doc) {
-            tmp.attr("__doc__") = strdup(const_cast<char *>(fun_ptr->m_ml->ml_doc));
-        }
-
-        attr(cf.name()) = tmp;
+        attr(cf.name()) = staticmethod(cf);
         return *this;
     }
 
