@@ -57,11 +57,11 @@ specification.
 
     struct buffer_info {
         void *ptr;
-        ssize_t itemsize;
+        py::ssize_t itemsize;
         std::string format;
-        ssize_t ndim;
-        std::vector<ssize_t> shape;
-        std::vector<ssize_t> strides;
+        py::ssize_t ndim;
+        std::vector<py::ssize_t> shape;
+        std::vector<py::ssize_t> strides;
     };
 
 To create a C++ function that can take a Python buffer object as an argument,
@@ -81,7 +81,7 @@ buffer objects (e.g. a NumPy matrix).
     constexpr bool rowMajor = Matrix::Flags & Eigen::RowMajorBit;
 
     py::class_<Matrix>(m, "Matrix", py::buffer_protocol())
-        .def("__init__", [](py::buffer b) {
+        .def(py::init([](py::buffer b) {
             typedef Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> Strides;
 
             /* Request a buffer descriptor from Python */
@@ -101,8 +101,8 @@ buffer objects (e.g. a NumPy matrix).
             auto map = Eigen::Map<Matrix, 0, Strides>(
                 static_cast<Scalar *>(info.ptr), info.shape[0], info.shape[1], strides);
 
-            return Matrix(m);
-        });
+            return Matrix(map);
+        }));
 
 For reference, the ``def_buffer()`` call for this Eigen data type should look
 as follows:
@@ -274,9 +274,9 @@ simply using ``vectorize``).
 
         py::buffer_info buf3 = result.request();
 
-        double *ptr1 = (double *) buf1.ptr,
-               *ptr2 = (double *) buf2.ptr,
-               *ptr3 = (double *) buf3.ptr;
+        double *ptr1 = static_cast<double *>(buf1.ptr);
+        double *ptr2 = static_cast<double *>(buf2.ptr);
+        double *ptr3 = static_cast<double *>(buf3.ptr);
 
         for (size_t idx = 0; idx < buf1.shape[0]; idx++)
             ptr3[idx] = ptr1[idx] + ptr2[idx];
@@ -309,17 +309,17 @@ where ``N`` gives the required dimensionality of the array:
     m.def("sum_3d", [](py::array_t<double> x) {
         auto r = x.unchecked<3>(); // x must have ndim = 3; can be non-writeable
         double sum = 0;
-        for (ssize_t i = 0; i < r.shape(0); i++)
-            for (ssize_t j = 0; j < r.shape(1); j++)
-                for (ssize_t k = 0; k < r.shape(2); k++)
+        for (py::ssize_t i = 0; i < r.shape(0); i++)
+            for (py::ssize_t j = 0; j < r.shape(1); j++)
+                for (py::ssize_t k = 0; k < r.shape(2); k++)
                     sum += r(i, j, k);
         return sum;
     });
     m.def("increment_3d", [](py::array_t<double> x) {
         auto r = x.mutable_unchecked<3>(); // Will throw if ndim != 3 or flags.writeable is false
-        for (ssize_t i = 0; i < r.shape(0); i++)
-            for (ssize_t j = 0; j < r.shape(1); j++)
-                for (ssize_t k = 0; k < r.shape(2); k++)
+        for (py::ssize_t i = 0; i < r.shape(0); i++)
+            for (py::ssize_t j = 0; j < r.shape(1); j++)
+                for (py::ssize_t k = 0; k < r.shape(2); k++)
                     r(i, j, k) += 1.0;
     }, py::arg().noconvert());
 
@@ -387,6 +387,9 @@ operation on the C++ side:
    py::array a = /* A NumPy array */;
    py::array b = a[py::make_tuple(0, py::ellipsis(), 0)];
 
+.. versionchanged:: 2.6
+   ``py::ellipsis()`` is now also avaliable in Python 2.
+
 Memory view
 ===========
 
@@ -428,3 +431,6 @@ We can also use ``memoryview::from_memory`` for a simple 1D contiguous buffer:
 .. note::
 
     ``memoryview::from_memory`` is not available in Python 2.
+
+.. versionchanged:: 2.6
+    ``memoryview::from_memory`` added.

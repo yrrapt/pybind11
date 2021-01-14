@@ -13,17 +13,24 @@ import textwrap
 
 import pytest
 
+import env
+
 # Early diagnostic for failed imports
 import pybind11_tests  # noqa: F401
 
-_unicode_marker = re.compile(r'u(\'[^\']*\')')
-_long_marker = re.compile(r'([0-9])L')
-_hexadecimal = re.compile(r'0x[0-9a-fA-F]+')
+_unicode_marker = re.compile(r"u(\'[^\']*\')")
+_long_marker = re.compile(r"([0-9])L")
+_hexadecimal = re.compile(r"0x[0-9a-fA-F]+")
+
+# Avoid collecting Python3 only files
+collect_ignore = []
+if env.PY2:
+    collect_ignore.append("test_async.py")
 
 
 def _strip_and_dedent(s):
     """For triple-quote strings"""
-    return textwrap.dedent(s.lstrip('\n').rstrip())
+    return textwrap.dedent(s.lstrip("\n").rstrip())
 
 
 def _split_and_sort(s):
@@ -33,11 +40,14 @@ def _split_and_sort(s):
 
 def _make_explanation(a, b):
     """Explanation for a failed assert -- the a and b arguments are List[str]"""
-    return ["--- actual / +++ expected"] + [line.strip('\n') for line in difflib.ndiff(a, b)]
+    return ["--- actual / +++ expected"] + [
+        line.strip("\n") for line in difflib.ndiff(a, b)
+    ]
 
 
 class Output(object):
     """Basic output post-processing and comparison"""
+
     def __init__(self, string):
         self.string = string
         self.explanation = []
@@ -47,7 +57,11 @@ class Output(object):
 
     def __eq__(self, other):
         # Ignore constructor/destructor output which is prefixed with "###"
-        a = [line for line in self.string.strip().splitlines() if not line.startswith("###")]
+        a = [
+            line
+            for line in self.string.strip().splitlines()
+            if not line.startswith("###")
+        ]
         b = _strip_and_dedent(other).splitlines()
         if a == b:
             return True
@@ -58,6 +72,7 @@ class Output(object):
 
 class Unordered(Output):
     """Custom comparison for output without strict line ordering"""
+
     def __eq__(self, other):
         a = _split_and_sort(self.string)
         b = _split_and_sort(other)
@@ -168,7 +183,7 @@ def msg():
 # noinspection PyUnusedLocal
 def pytest_assertrepr_compare(op, left, right):
     """Hook to insert custom failure explanation"""
-    if hasattr(left, 'explanation'):
+    if hasattr(left, "explanation"):
         return left.explanation
 
 
@@ -182,8 +197,8 @@ def suppress(exception):
 
 
 def gc_collect():
-    ''' Run the garbage collector twice (needed when running
-    reference counting tests with PyPy) '''
+    """Run the garbage collector twice (needed when running
+    reference counting tests with PyPy)"""
     gc.collect()
     gc.collect()
 
