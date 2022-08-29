@@ -17,6 +17,8 @@ endif()
 set(Python_ADDITIONAL_VERSIONS 3.7 3.6 3.5 3.4)
 find_package(PythonLibsNew ${PYBIND11_PYTHON_VERSION} REQUIRED)
 
+find_package(fmt)
+
 include(CheckCXXCompilerFlag)
 include(CMakeParseArguments)
 
@@ -130,6 +132,9 @@ function(pybind11_add_module target_name)
     set(exclude_from_all EXCLUDE_FROM_ALL)
   endif()
 
+  add_library(fmt-header-only INTERFACE)
+  add_library(fmt::fmt-header-only ALIAS fmt-header-only)
+  
   add_library(${target_name} ${lib_type} ${exclude_from_all} ${ARG_UNPARSED_ARGUMENTS})
 
   if(ARG_SYSTEM)
